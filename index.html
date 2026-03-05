@@ -4,21 +4,123 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Camera Feed</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-color: #f4f4f4;
+        }
+        #videoFeed {
+            width: 100%;
+            max-width: 800px;
+            height: auto;
+            border: 1px solid #ccc;
+            margin-bottom: 10px;
+        }
+        #controls {
+            margin: 10px;
+        }
+        button {
+            margin: 5px;
+            padding: 10px 15px;
+            font-size: 16px;
+        }
+        #status {
+            font-size: 18px;
+            color: green;
+        }
+    </style>
 </head>
 <body>
-    <h1>Live Camera Feed</h1>
-    <video id="videoElement" width="640" height="480" autoplay></video>
+
+    <h1>Camera Feed Webpage</h1>
+    <video id="videoFeed" controls autoplay></video>
+    <div id="controls">
+        <button id="startButton">Start</button>
+        <button id="stopButton">Stop</button>
+        <button id="captureButton">Capture Frame</button>
+    </div>
+    <div id="status">Live Status: <span id="liveStatus">Disconnected</span></div>
+
     <script>
-        const video = document.getElementById('videoElement');
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const video = document.getElementById('videoFeed');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const captureButton = document.getElementById('captureButton');
+        const liveStatus = document.getElementById('liveStatus');
+        let mediaRecorder;
+        let chunks = [];
+
+        // Replace with your camera stream URL
+        const cameraStreamURL = 'your_camera_stream_url';
+
+        function startCamera() {
             navigator.mediaDevices.getUserMedia({ video: true })
-                .then(function(stream) {
+                .then(stream => {
                     video.srcObject = stream;
+                    liveStatus.textContent = 'Connected';
+                    mediaRecorder = new MediaRecorder(stream);
+                    mediaRecorder.ondataavailable = e => chunks.push(e.data);
+                    mediaRecorder.onstop = saveRecording;
                 })
-                .catch(function(err) {
-                    console.log("Something went wrong: " + err);
+                .catch(err => {
+                    console.error('Error accessing camera: ', err);
+                    liveStatus.textContent = 'Error accessing camera';
                 });
         }
+
+        function stopCamera() {
+            const stream = video.srcObject;
+            if (stream) {
+                const tracks = stream.getTracks();
+                tracks.forEach(track => track.stop());
+                video.srcObject = null;
+                liveStatus.textContent = 'Disconnected';
+            }
+        }
+
+        function captureFrame() {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const img = canvas.toDataURL('image/png');
+            // You can optionally download the captured image
+            const link = document.createElement('a');
+            link.href = img;
+            link.download = 'frame.png';
+            link.click();
+        }
+
+        function saveRecording() {
+            const blob = new Blob(chunks, { type: 'video/webm' });
+            chunks = [];
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'recording.webm';
+            a.click();
+            URL.revokeObjectURL(url);
+            liveStatus.textContent = 'Recording saved';
+        }
+
+        startButton.addEventListener('click', () => {
+            startCamera();
+            mediaRecorder.start();
+        });
+
+        stopButton.addEventListener('click', () => {
+            stopCamera();
+            mediaRecorder.stop();
+        });
+
+        captureButton.addEventListener('click', captureFrame);
     </script>
 </body>
 </html>
