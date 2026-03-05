@@ -1,22 +1,20 @@
-<!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video Metrics Stage</title>
+    <style>
+        video {
+            width: 100%;
+            height: 100vh;
+            object-fit: cover;
+        }
+    </style>
 </head>
 <body>
-    <h1>Live Camera Feed</h1>
-    <video id="video" autoplay></video>
+    <video controls>
+        <source src="your-video-file.mp4" type="video/mp4">
+        Your browser does not support the video tag.
+    </video>
     <script>
-        const video = document.getElementById('video');
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then(stream => {
-                video.srcObject = stream;
-            })
-            .catch(error => {
-                console.error('Error accessing the camera: ', error);
-            });
+        console.log('Video element is displayed with full width and height.');
     </script>
 </body>
 </html>
