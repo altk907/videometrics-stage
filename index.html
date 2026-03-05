@@ -3,22 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video Metrics</title>
-    <style>
-        /* Proper styling for video feed */
-        video {
-            width: 100%;
-            height: auto;
-            display: block;
-            margin: auto;
-        }
-    </style>
+    <title>Video Metrics Stage</title>
 </head>
 <body>
-    <h1>Camera Feed</h1>
-    <video id="cameraFeed" autoplay>
-        <source src="your-video-source-url-here" type="video/mp4">
-        Your browser does not support the video tag.
-    </video>
+    <h1>Live Camera Feed</h1>
+    <video id="video" autoplay></video>
+    <script>
+        const video = document.getElementById('video');
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+                video.srcObject = stream;
+            })
+            .catch(error => {
+                console.error('Error accessing the camera: ', error);
+            });
+    </script>
 </body>
 </html>
