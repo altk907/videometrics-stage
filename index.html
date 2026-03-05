@@ -3,37 +3,837 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video Metrics</title>
+    <title>Gaze Tracker</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tracking.js/1.1.3/tracking-min.js"></script>
     <style>
-        body {
-            background-color: black;
-            color: white;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
+        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
+
+        :root {
+            --green: #00ff88;
+            --red: #ff3355;
+            --yellow: #ffcc00;
+            --dim: #0a0a0a;
+            --panel: #0d1117;
+            --border: #1e2d3d;
+            --text-dim: #4a6a7a;
         }
-        video {
-            width: 80%;
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background: var(--dim);
+            color: #cdd9e5;
+            font-family: 'Share Tech Mono', monospace;
+            height: 100vh;
+            display: grid;
+            grid-template-rows: auto 1fr auto;
+            grid-template-columns: 1fr 340px;
+            grid-template-areas:
+                "header header"
+                "main   sidebar"
+                "footer footer";
+            overflow: hidden;
+        }
+
+        /* Scanline overlay */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0,0,0,0.08) 2px,
+                rgba(0,0,0,0.08) 4px
+            );
+            pointer-events: none;
+            z-index: 999;
+        }
+
+        header {
+            grid-area: header;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 24px;
+            border-bottom: 1px solid var(--border);
+            background: var(--panel);
+        }
+
+        .logo {
+            font-family: 'Orbitron', monospace;
+            font-weight: 900;
+            font-size: 1.1rem;
+            letter-spacing: 0.2em;
+            color: var(--green);
+            text-shadow: 0 0 20px rgba(0,255,136,0.4);
+        }
+
+        .logo span { color: var(--text-dim); }
+
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            font-size: 0.72rem;
+            color: var(--text-dim);
+            letter-spacing: 0.1em;
+        }
+
+        .status-pill {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border: 1px solid var(--border);
+            border-radius: 2px;
+        }
+
+        .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--text-dim);
+        }
+        .dot.active { background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 1.5s infinite; }
+        .dot.watching { background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 1s infinite; }
+        .dot.away { background: var(--red); box-shadow: 0 0 8px var(--red); }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        /* Main video area */
+        main {
+            grid-area: main;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .video-wrapper {
+            position: relative;
+            width: 100%;
+            max-width: 720px;
+        }
+
+        .corner {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            z-index: 2;
+        }
+        .corner.tl { top: -1px; left: -1px; border-top: 2px solid var(--green); border-left: 2px solid var(--green); }
+        .corner.tr { top: -1px; right: -1px; border-top: 2px solid var(--green); border-right: 2px solid var(--green); }
+        .corner.bl { bottom: -1px; left: -1px; border-bottom: 2px solid var(--green); border-left: 2px solid var(--green); }
+        .corner.br { bottom: -1px; right: -1px; border-bottom: 2px solid var(--green); border-right: 2px solid var(--green); }
+
+        #videoElem {
+            width: 100%;
             height: auto;
-            border: 2px solid white;
+            display: block;
+            filter: brightness(0.92) contrast(1.05);
+        }
+
+        /* Face detection overlay canvas */
+        #overlayCanvas {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        .gaze-badge {
+            position: absolute;
+            bottom: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Orbitron', monospace;
+            font-size: 0.65rem;
+            font-weight: 700;
+            letter-spacing: 0.2em;
+            padding: 6px 16px;
+            border-radius: 2px;
+            transition: all 0.3s;
+            text-transform: uppercase;
+        }
+        .gaze-badge.on-screen {
+            background: rgba(0,255,136,0.12);
+            border: 1px solid var(--green);
+            color: var(--green);
+            text-shadow: 0 0 10px var(--green);
+        }
+        .gaze-badge.off-screen {
+            background: rgba(255,51,85,0.12);
+            border: 1px solid var(--red);
+            color: var(--red);
+            text-shadow: 0 0 10px var(--red);
+        }
+        .gaze-badge.idle {
+            background: rgba(74,106,122,0.12);
+            border: 1px solid var(--text-dim);
+            color: var(--text-dim);
+        }
+
+        /* Sidebar */
+        aside {
+            grid-area: sidebar;
+            background: var(--panel);
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .panel-section {
+            border-bottom: 1px solid var(--border);
+            padding: 16px;
+        }
+
+        .panel-label {
+            font-size: 0.62rem;
+            letter-spacing: 0.25em;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            margin-bottom: 12px;
+        }
+
+        /* Controls */
+        .controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 10px 0;
+            font-family: 'Orbitron', monospace;
+            font-size: 0.68rem;
+            font-weight: 700;
+            letter-spacing: 0.15em;
+            border: none;
+            cursor: pointer;
+            border-radius: 2px;
+            transition: all 0.2s;
+            text-transform: uppercase;
+        }
+
+        .btn-start {
+            background: var(--green);
+            color: #000;
+        }
+        .btn-start:hover:not(:disabled) {
+            background: #00ffaa;
+            box-shadow: 0 0 20px rgba(0,255,136,0.4);
+        }
+        .btn-stop {
+            background: transparent;
+            color: var(--red);
+            border: 1px solid var(--red);
+        }
+        .btn-stop:hover:not(:disabled) {
+            background: rgba(255,51,85,0.1);
+            box-shadow: 0 0 20px rgba(255,51,85,0.3);
+        }
+        .btn:disabled { opacity: 0.25; cursor: not-allowed; }
+
+        /* Timer display */
+        .timer-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .timer-card {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--border);
+            padding: 10px;
+            border-radius: 2px;
+        }
+
+        .timer-card.highlight {
+            border-color: rgba(0,255,136,0.3);
+            background: rgba(0,255,136,0.04);
+        }
+
+        .timer-label {
+            font-size: 0.58rem;
+            color: var(--text-dim);
+            letter-spacing: 0.15em;
+            margin-bottom: 4px;
+        }
+
+        .timer-value {
+            font-family: 'Orbitron', monospace;
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #cdd9e5;
+        }
+
+        .timer-card.highlight .timer-value { color: var(--green); }
+
+        /* Metrics */
+        .metric-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(30,45,61,0.5);
+            font-size: 0.72rem;
+        }
+
+        .metric-row:last-child { border-bottom: none; }
+
+        .metric-key { color: var(--text-dim); }
+        .metric-val { color: #cdd9e5; font-weight: bold; }
+        .metric-val.good { color: var(--green); }
+        .metric-val.bad { color: var(--red); }
+        .metric-val.warn { color: var(--yellow); }
+
+        /* Gaze indicator bar */
+        .gaze-bar-wrap {
+            margin-top: 8px;
+        }
+
+        .gaze-bar-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.62rem;
+            color: var(--text-dim);
+            margin-bottom: 4px;
+        }
+
+        .gaze-bar {
+            height: 6px;
+            background: rgba(0,0,0,0.4);
+            border-radius: 3px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+
+        .gaze-bar-fill {
+            height: 100%;
+            background: var(--green);
+            transition: width 0.5s ease;
+            border-radius: 3px;
+            box-shadow: 0 0 8px rgba(0,255,136,0.5);
+        }
+
+        /* Event log */
+        .log-container {
+            flex: 1;
+            overflow-y: auto;
+            max-height: 180px;
+            font-size: 0.65rem;
+            line-height: 1.8;
+        }
+
+        .log-entry {
+            display: flex;
+            gap: 8px;
+            padding: 2px 0;
+            border-bottom: 1px solid rgba(30,45,61,0.3);
+        }
+
+        .log-time { color: var(--text-dim); flex-shrink: 0; }
+        .log-msg.in { color: var(--green); }
+        .log-msg.out { color: var(--red); }
+        .log-msg.sys { color: var(--yellow); }
+
+        /* Result banner */
+        #resultBanner {
+            display: none;
+            background: rgba(0,255,136,0.06);
+            border: 1px solid rgba(0,255,136,0.3);
+            border-radius: 2px;
+            padding: 12px;
+            text-align: center;
+        }
+
+        #resultBanner.visible { display: block; }
+        .result-total {
+            font-family: 'Orbitron', monospace;
+            font-size: 1.4rem;
+            font-weight: 900;
+            color: var(--green);
+            text-shadow: 0 0 20px rgba(0,255,136,0.5);
+        }
+        .result-label {
+            font-size: 0.6rem;
+            letter-spacing: 0.2em;
+            color: var(--text-dim);
+            margin-top: 4px;
+        }
+
+        footer {
+            grid-area: footer;
+            padding: 8px 24px;
+            border-top: 1px solid var(--border);
+            background: var(--panel);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.6rem;
+            color: var(--text-dim);
+            letter-spacing: 0.1em;
+        }
+
+        /* Debug face box */
+        .face-indicator {
+            position: absolute;
+            border: 1.5px solid var(--green);
+            box-shadow: 0 0 10px rgba(0,255,136,0.3);
+            pointer-events: none;
+            transition: all 0.05s linear;
         }
     </style>
 </head>
 <body>
-    <video id="videoElem" autoplay playsinline></video>
-    <script>
-        console.log('Initializing video element...');
-        const video = document.getElementById('videoElem');
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then(stream => {
-                video.srcObject = stream;
-                console.log('Camera feed is displaying correctly.');
-            })
-            .catch(error => {
-                console.error('Error accessing camera: ', error);
-            });
-    </script>
+
+<header>
+    <div class="logo">GAZE<span>_</span>TRACKER</div>
+    <div class="status-bar">
+        <div class="status-pill">
+            <div class="dot" id="camDot"></div>
+            <span id="camStatus">CAMERA OFFLINE</span>
+        </div>
+        <div class="status-pill">
+            <div class="dot" id="sessionDot"></div>
+            <span id="sessionStatus">SESSION IDLE</span>
+        </div>
+        <div class="status-pill">
+            <div class="dot" id="gazeDot"></div>
+            <span id="gazeStatus">GAZE —</span>
+        </div>
+    </div>
+</header>
+
+<main>
+    <div class="video-wrapper" id="videoWrapper">
+        <div class="corner tl"></div>
+        <div class="corner tr"></div>
+        <div class="corner bl"></div>
+        <div class="corner br"></div>
+        <video id="videoElem" autoplay playsinline muted></video>
+        <canvas id="overlayCanvas"></canvas>
+        <div class="gaze-badge idle" id="gazeBadge">AWAITING SESSION</div>
+    </div>
+</main>
+
+<aside>
+    <!-- Controls -->
+    <div class="panel-section">
+        <div class="panel-label">// Session Control</div>
+        <div class="controls">
+            <button class="btn btn-start" id="btnStart">START</button>
+            <button class="btn btn-stop" id="btnStop" disabled>STOP</button>
+        </div>
+    </div>
+
+    <!-- Timers -->
+    <div class="panel-section">
+        <div class="panel-label">// Timers</div>
+        <div class="timer-grid">
+            <div class="timer-card">
+                <div class="timer-label">ELAPSED</div>
+                <div class="timer-value" id="timerElapsed">00:00</div>
+            </div>
+            <div class="timer-card highlight">
+                <div class="timer-label">ON SCREEN</div>
+                <div class="timer-value" id="timerOnScreen">00:00</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Debug Metrics -->
+    <div class="panel-section">
+        <div class="panel-label">// Debug Metrics</div>
+        <div class="metric-row">
+            <span class="metric-key">FACE DETECTED</span>
+            <span class="metric-val" id="dbgFace">—</span>
+        </div>
+        <div class="metric-row">
+            <span class="metric-key">FACE CONFIDENCE</span>
+            <span class="metric-val" id="dbgConf">—</span>
+        </div>
+        <div class="metric-row">
+            <span class="metric-key">FACE SIZE (px)</span>
+            <span class="metric-val" id="dbgSize">—</span>
+        </div>
+        <div class="metric-row">
+            <span class="metric-key">FACE CENTERED</span>
+            <span class="metric-val" id="dbgCenter">—</span>
+        </div>
+        <div class="metric-row">
+            <span class="metric-key">DETECTION FPS</span>
+            <span class="metric-val" id="dbgFps">—</span>
+        </div>
+        <div class="metric-row">
+            <span class="metric-key">GAZE STATE</span>
+            <span class="metric-val" id="dbgGaze">—</span>
+        </div>
+        <div class="gaze-bar-wrap">
+            <div class="gaze-bar-label">
+                <span>SCREEN TIME RATIO</span>
+                <span id="ratioLabel">0%</span>
+            </div>
+            <div class="gaze-bar">
+                <div class="gaze-bar-fill" id="gazeBarFill" style="width:0%"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Result -->
+    <div class="panel-section">
+        <div class="panel-label">// Session Result</div>
+        <div id="resultBanner">
+            <div class="result-total" id="resultTotal">—</div>
+            <div class="result-label">TOTAL SCREEN TIME</div>
+            <div style="margin-top:6px; font-size:0.62rem; color:var(--text-dim)" id="resultRatio"></div>
+        </div>
+        <div id="noResult" style="font-size:0.65rem; color:var(--text-dim);">No session data yet.</div>
+    </div>
+
+    <!-- Event Log -->
+    <div class="panel-section" style="flex:1; display:flex; flex-direction:column;">
+        <div class="panel-label">// Event Log</div>
+        <div class="log-container" id="logContainer"></div>
+    </div>
+</aside>
+
+<footer>
+    <span>GAZE_TRACKER v1.0 — face detection via tracking.js</span>
+    <span id="footerTime">--:--:--</span>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tracking.js/1.1.3/tracking-min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tracking.js/1.1.3/data/face-min.js"></script>
+<script>
+(function() {
+    const video       = document.getElementById('videoElem');
+    const canvas      = document.getElementById('overlayCanvas');
+    const ctx         = canvas.getContext('2d');
+    const wrapper     = document.getElementById('videoWrapper');
+
+    const btnStart    = document.getElementById('btnStart');
+    const btnStop     = document.getElementById('btnStop');
+
+    const timerEl     = document.getElementById('timerElapsed');
+    const onScreenEl  = document.getElementById('timerOnScreen');
+
+    // status bar
+    const camDot      = document.getElementById('camDot');
+    const camStatus   = document.getElementById('camStatus');
+    const sessionDot  = document.getElementById('sessionDot');
+    const sessionStatus = document.getElementById('sessionStatus');
+    const gazeDot     = document.getElementById('gazeDot');
+    const gazeStatus  = document.getElementById('gazeStatus');
+    const gazeBadge   = document.getElementById('gazeBadge');
+
+    // debug
+    const dbgFace     = document.getElementById('dbgFace');
+    const dbgConf     = document.getElementById('dbgConf');
+    const dbgSize     = document.getElementById('dbgSize');
+    const dbgCenter   = document.getElementById('dbgCenter');
+    const dbgFps      = document.getElementById('dbgFps');
+    const dbgGaze     = document.getElementById('dbgGaze');
+    const gazeBarFill = document.getElementById('gazeBarFill');
+    const ratioLabel  = document.getElementById('ratioLabel');
+
+    // result
+    const resultBanner = document.getElementById('resultBanner');
+    const noResult     = document.getElementById('noResult');
+    const resultTotal  = document.getElementById('resultTotal');
+    const resultRatio  = document.getElementById('resultRatio');
+
+    // log
+    const logContainer = document.getElementById('logContainer');
+
+    // State
+    let sessionActive  = false;
+    let sessionStart   = 0;
+    let onScreenMs     = 0;
+    let gazeStart      = null;   // when current "on screen" streak began
+    let isOnScreen     = false;
+    let tickInterval   = null;
+    let tracker        = null;
+    let detectionCount = 0;
+    let lastDetectionTime = Date.now();
+    let detectionFps   = 0;
+    let faceBoxes      = [];
+    let animFrameId    = null;
+
+    // Footer clock
+    setInterval(() => {
+        document.getElementById('footerTime').textContent =
+            new Date().toTimeString().slice(0,8);
+    }, 1000);
+
+    // ── Camera init ──────────────────────────────────────────────────
+    navigator.mediaDevices.getUserMedia({ video: true })
+        .then(stream => {
+            video.srcObject = stream;
+            camDot.className = 'dot active';
+            camStatus.textContent = 'CAMERA ONLINE';
+            addLog('sys', 'Camera feed initialized');
+        })
+        .catch(err => {
+            camStatus.textContent = 'CAMERA ERROR';
+            addLog('sys', 'Camera error: ' + err.message);
+        });
+
+    // ── Canvas resize ────────────────────────────────────────────────
+    function resizeCanvas() {
+        canvas.width  = video.offsetWidth;
+        canvas.height = video.offsetHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    video.addEventListener('loadedmetadata', resizeCanvas);
+    setTimeout(resizeCanvas, 500);
+
+    // ── Draw overlay ─────────────────────────────────────────────────
+    function drawOverlay() {
+        animFrameId = requestAnimationFrame(drawOverlay);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (!sessionActive || faceBoxes.length === 0) return;
+
+        const scaleX = canvas.width  / (video.videoWidth  || canvas.width);
+        const scaleY = canvas.height / (video.videoHeight || canvas.height);
+
+        faceBoxes.forEach(face => {
+            const x = face.x * scaleX;
+            const y = face.y * scaleY;
+            const w = face.width  * scaleX;
+            const h = face.height * scaleY;
+
+            ctx.strokeStyle = isOnScreen ? '#00ff88' : '#ff3355';
+            ctx.lineWidth = 2;
+            ctx.shadowColor = isOnScreen ? '#00ff88' : '#ff3355';
+            ctx.shadowBlur = 12;
+            ctx.strokeRect(x, y, w, h);
+
+            // crosshair at center
+            const cx = x + w / 2;
+            const cy = y + h / 2;
+            ctx.beginPath();
+            ctx.moveTo(cx - 8, cy); ctx.lineTo(cx + 8, cy);
+            ctx.moveTo(cx, cy - 8); ctx.lineTo(cx, cy + 8);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // label
+            ctx.fillStyle = isOnScreen ? '#00ff88' : '#ff3355';
+            ctx.font = '10px Share Tech Mono, monospace';
+            ctx.fillText(`FACE [${Math.round(w)}×${Math.round(h)}]`, x + 2, y - 4);
+        });
+    }
+    drawOverlay();
+
+    // ── Tracking.js face detection ───────────────────────────────────
+    function startTracking() {
+        tracker = new window.tracking.ObjectTracker('face');
+        tracker.setInitialScale(4);
+        tracker.setStepSize(2);
+        tracker.setEdgesDensity(0.1);
+
+        window.tracking.track(video, tracker, { camera: false });
+
+        tracker.on('track', function(event) {
+            const now = Date.now();
+            if (event.data.length > 0) {
+                detectionCount++;
+                detectionFps = Math.round(1000 / (now - lastDetectionTime));
+                lastDetectionTime = now;
+            }
+
+            faceBoxes = event.data;
+            const detected = event.data.length > 0;
+
+            if (!sessionActive) return;
+
+            // Gaze logic
+            if (detected) {
+                const face = event.data[0];
+                const vidW = video.videoWidth || video.offsetWidth;
+                const vidH = video.videoHeight || video.offsetHeight;
+                const faceCx = face.x + face.width / 2;
+                const faceCy = face.y + face.height / 2;
+                const margin = 0.15;
+                const centered =
+                    faceCx > vidW * margin && faceCx < vidW * (1 - margin) &&
+                    faceCy > vidH * margin && faceCy < vidH * (1 - margin);
+
+                // Update debug
+                dbgFace.textContent   = 'YES';
+                dbgFace.className     = 'metric-val good';
+                dbgConf.textContent   = event.data.length + ' face(s)';
+                dbgSize.textContent   = `${Math.round(face.width)}×${Math.round(face.height)}`;
+                dbgCenter.textContent = centered ? 'YES' : 'EDGE';
+                dbgCenter.className   = 'metric-val ' + (centered ? 'good' : 'warn');
+                dbgFps.textContent    = detectionFps + ' fps';
+                dbgGaze.textContent   = 'ON SCREEN';
+                dbgGaze.className     = 'metric-val good';
+
+                if (!isOnScreen) {
+                    isOnScreen = true;
+                    gazeStart = Date.now();
+                    setGazeUI(true);
+                    addLog('in', 'Subject looking at screen');
+                }
+            } else {
+                dbgFace.textContent   = 'NO';
+                dbgFace.className     = 'metric-val bad';
+                dbgConf.textContent   = '—';
+                dbgSize.textContent   = '—';
+                dbgCenter.textContent = '—';
+                dbgCenter.className   = 'metric-val';
+                dbgFps.textContent    = detectionFps + ' fps';
+                dbgGaze.textContent   = 'OFF SCREEN';
+                dbgGaze.className     = 'metric-val bad';
+
+                if (isOnScreen) {
+                    isOnScreen = false;
+                    onScreenMs += Date.now() - gazeStart;
+                    gazeStart = null;
+                    setGazeUI(false);
+                    addLog('out', 'Subject looked away');
+                }
+            }
+        });
+    }
+
+    function setGazeUI(on) {
+        if (on) {
+            gazeDot.className = 'dot watching';
+            gazeStatus.textContent = 'GAZE ON';
+            gazeBadge.textContent = '● ON SCREEN';
+            gazeBadge.className = 'gaze-badge on-screen';
+            sessionDot.className = 'dot watching';
+        } else {
+            gazeDot.className = 'dot away';
+            gazeStatus.textContent = 'GAZE OFF';
+            gazeBadge.textContent = '● OFF SCREEN';
+            gazeBadge.className = 'gaze-badge off-screen';
+        }
+    }
+
+    // ── Timer tick ───────────────────────────────────────────────────
+    function formatTime(ms) {
+        const s = Math.floor(ms / 1000);
+        const m = Math.floor(s / 60);
+        return String(m).padStart(2,'0') + ':' + String(s % 60).padStart(2,'0');
+    }
+
+    function tick() {
+        const elapsed = Date.now() - sessionStart;
+        timerEl.textContent = formatTime(elapsed);
+
+        let screenTime = onScreenMs;
+        if (isOnScreen && gazeStart) screenTime += Date.now() - gazeStart;
+        onScreenEl.textContent = formatTime(screenTime);
+
+        // ratio bar
+        const ratio = elapsed > 0 ? Math.min(100, Math.round(screenTime / elapsed * 100)) : 0;
+        gazeBarFill.style.width = ratio + '%';
+        ratioLabel.textContent = ratio + '%';
+    }
+
+    // ── Start / Stop ─────────────────────────────────────────────────
+    btnStart.addEventListener('click', () => {
+        if (sessionActive) return;
+
+        // reset
+        sessionStart = Date.now();
+        onScreenMs   = 0;
+        gazeStart    = null;
+        isOnScreen   = false;
+        faceBoxes    = [];
+        sessionActive = true;
+
+        btnStart.disabled = true;
+        btnStop.disabled  = false;
+        sessionDot.className = 'dot active';
+        sessionStatus.textContent = 'SESSION ACTIVE';
+        gazeBadge.textContent = '● TRACKING…';
+        gazeBadge.className = 'gaze-badge idle';
+
+        resultBanner.classList.remove('visible');
+        noResult.style.display = 'block';
+
+        tickInterval = setInterval(tick, 250);
+        startTracking();
+        addLog('sys', 'Session started');
+    });
+
+    btnStop.addEventListener('click', () => {
+        if (!sessionActive) return;
+        sessionActive = false;
+
+        // flush any active gaze
+        if (isOnScreen && gazeStart) {
+            onScreenMs += Date.now() - gazeStart;
+            gazeStart = null;
+            isOnScreen = false;
+        }
+
+        clearInterval(tickInterval);
+
+        if (tracker) {
+            try { tracker.removeAllListeners('track'); } catch(e){}
+            tracker = null;
+        }
+
+        btnStart.disabled = false;
+        btnStop.disabled  = true;
+        sessionDot.className = 'dot';
+        sessionStatus.textContent = 'SESSION IDLE';
+        gazeDot.className = 'dot';
+        gazeStatus.textContent = 'GAZE —';
+        gazeBadge.textContent = 'SESSION ENDED';
+        gazeBadge.className = 'gaze-badge idle';
+        faceBoxes = [];
+
+        // Show result
+        const totalElapsed = Date.now() - sessionStart;
+        const ratio = totalElapsed > 0 ? Math.round(onScreenMs / totalElapsed * 100) : 0;
+        resultTotal.textContent = formatTime(onScreenMs);
+        resultRatio.textContent = `${ratio}% of ${formatTime(totalElapsed)} total session`;
+        noResult.style.display = 'none';
+        resultBanner.classList.add('visible');
+
+        addLog('sys', `Session ended — screen time: ${formatTime(onScreenMs)} (${ratio}%)`);
+
+        // reset debug fields
+        dbgFace.textContent = '—'; dbgFace.className = 'metric-val';
+        dbgConf.textContent = '—';
+        dbgSize.textContent = '—';
+        dbgCenter.textContent = '—'; dbgCenter.className = 'metric-val';
+        dbgGaze.textContent = '—'; dbgGaze.className = 'metric-val';
+        gazeBarFill.style.width = '0%';
+        ratioLabel.textContent = '0%';
+        timerEl.textContent = '00:00';
+        onScreenEl.textContent = '00:00';
+    });
+
+    // ── Log helper ───────────────────────────────────────────────────
+    function addLog(type, msg) {
+        const entry = document.createElement('div');
+        entry.className = 'log-entry';
+        const t = new Date().toTimeString().slice(0,8);
+        entry.innerHTML = `<span class="log-time">${t}</span><span class="log-msg ${type}">${msg}</span>`;
+        logContainer.appendChild(entry);
+        logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    addLog('sys', 'System initialized');
+})();
+</script>
 </body>
 </html>
